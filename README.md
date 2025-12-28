@@ -138,11 +138,22 @@ Switch Polyscope to local mode, first run URP, then run the Python script:
 python rtde_control_min.py
 ```
 
-Future：
+### (4.4) Servoj
 
-Servoj_RTDE_UR5 Project: Provides smoother control
+Provides smoother control: 
 
-Download Folder: 
+1 PolyScope: Load and run translation_sample_servoj.urp, it will pop up a popup (blocking=True) and pause at Continue.
+
+2 PC: Run python
+
+```bash
+python servoj_rtde_min_urp.py
+```
+
+3 PolyScope: Click Continue
+
+project:
+
 https://github.com/danielstankw/Servoj_RTDE_UR5
 
 ### (5) Collect action and camera data separately
@@ -311,9 +322,9 @@ python /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT/real_eval.py
 
 ### TODO
 
-控制：rtde读写，平滑
+本轮往上集成：rtde读写，平滑，爪子，自由驱动
 
-数据：数量，夹爪，随机化，vr，自由驱动集成
+数据：数量，夹爪，随机化，vr
 
 训练：lora, 240, 核桃
 

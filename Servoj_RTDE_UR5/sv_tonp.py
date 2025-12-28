@@ -11,14 +11,14 @@ def list_to_setp(setp, list):
     return setp
 
 #参数
-ROBOT_HOST = '192.168.0.201'
+ROBOT_HOST = '192.168.0.3'
 ROBOT_PORT = 30004
 config_filename = 'control_loop_configuration.xml'
 FREQUENCY = 500
-desired_pose_1 = [-0.503, -0.0088, 0.31397, 1.266, -2.572, -0.049]
-desired_pose_2 = [-0.403, -0.0088, 0.31397, 1.266, -2.572, -0.049]
-desired_pose_3 = [-0.403, -0.1088, 0.31397, 1.266, -2.572, -0.049]
-desired_pose_4 = [-0.503, -0.1088, 0.31397, 1.266, -2.572, -0.049]
+desired_pose_1 = [-0.503, -0.2088, 0.31397, 1.266, -2.572, -0.049]
+desired_pose_2 = [-0.403, -0.2088, 0.31397, 1.266, -2.572, -0.049]
+desired_pose_3 = [-0.403, -0.3088, 0.31397, 1.266, -2.572, -0.049]
+desired_pose_4 = [-0.503, -0.3088, 0.31397, 1.266, -2.572, -0.049]
 trajectory_time = 3
 
 
