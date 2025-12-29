@@ -45,6 +45,22 @@ Future: More convenient hardware implementation:
 
 https://www.universal-robots.com/articles/ur/interface-communication/external-freedrive-button/
 
+#### (1.3) Gripper
+
+/dev/ttyUSB0 belongs to root:dialout, so need to add current user to the dialout group to avoid using sudo every time:
+
+```bash
+sudo usermod -aG dialout zhangw
+```
+
+Make sure to turn on the gripper switch; Polyscope remote control. 
+
+Test: 
+
+```bash
+python test_gripper_min.py
+```
+
 ### （2）Camera-related component installation
 
 ```bash
