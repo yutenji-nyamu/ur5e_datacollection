@@ -174,6 +174,8 @@ https://github.com/danielstankw/Servoj_RTDE_UR5
 
 ### (5) Collect action and camera data separately
 
+### (5.1) Collect EE Pose of Arm
+
 Collect action data using RTDE.
 
 Record the TCP pose of the robotic arm and save it:
@@ -182,7 +184,7 @@ Record the TCP pose of the robotic arm and save it:
 python rtde_collect_2_csv.py
 ```
 
-Collect camera data.
+### (5.2) Collect Camera Data
 
 Basic implementation that saves images to a folder at a certain frequency:
 
@@ -196,15 +198,43 @@ Dual camera ver.:
 python realsense_dual_collect_2_folder.py
 ```
 
-### (6) Simultaneous collect action and camera data 
+### (5.3) Encapsulate
 
-Encapsulated the functions of rtde_collect_2_csv.py and realsense_collect_2_folder.py and realsense_dual_collect_2_folder.py into functions
+### (5.3.1) Camera
+
+Encapsulated Camera Data Collection into Functions: 
 
 realsense_collect_2_folder_func.py
 
 realsense_dual_collect_2_folder_func.py
 
-rtde_collect_2_csv_func.py
+### (5.3.2) Gripper, RTDE, and Freedrive
+
+Encapsulated All Script About Action Data Collection into Functions: 
+
+rtde_collect_2_csv_func.py (Maybe historical)
+
+gripper_serial.py
+
+rtde_tcp_logger.py
+
+freedrive_urscript.py
+
+### (5.4) Collect Action Data: EE-Pose and Gripper
+
+Notice Swtich Remote Control.
+
+```bash
+python collect_arm_gripper.py
+```
+
+c + Enter : gripper close
+
+o + Enter : gripper open
+
+q + Enter : quit
+
+### (6) Simultaneous collect action and camera data 
 
 Initial pose for data collection and reasoning, go home script (Polyscope remote mode):
 
@@ -232,7 +262,9 @@ UR5e_DataCollection/action_data
 
 UR5e_DataCollection/camera_data
 
-(LOG:12261816 collect 10 data)
+(LOG:12261816 collect 10 data in RoboTwin_like_data/run_20251226_181456, not delete)
+
+(action_data/ and camera_data/ is raw data, can delete after data is be converted)
 
 ### (7) Convert to HDF5 format
 
