@@ -236,31 +236,46 @@ q + Enter : quit
 
 ### (6) Simultaneous collect action and camera data 
 
+### (6.1) Encapsulated
+
+A class that encapsulates data collection for the arm and gripper:
+
+arm_gripper_collector.py
+
+### (6.2) Collect
+
 Initial pose for data collection and reasoning, go home script (Polyscope remote mode):
 
 ```bash
 go_home.py
 ```
 
-Call the encapsulated function to simultaneously collect action data and camera footage at a fixed frequency (Polyscope local mode):
+Polyscope remote mode.
+
+Arm + Gripper + dual Camera: 
+
+```bash
+python collect_data_action_arm_gripper_dual_camera_no_cv.py
+```
+
+c: gripper close
+
+o: gripper open
+
+q: quit
+
+History:
 
 ```bash
 python collect_data_action_camera.py
+python collect_data_action_dual_camera.py
 ```
 
 10hz
 
-Dual camera ver.:
+### (6.3) Raw Data
 
-```bash
-python collect_data_action_dual_camera.py
-```
-
-The collected raw data is temporarily stored in:
-
-UR5e_DataCollection/action_data
-
-UR5e_DataCollection/camera_data
+The collected raw data is temporarily stored in action_data/ and camera_data/
 
 (LOG:12261816 collect 10 data in RoboTwin_like_data/run_20251226_181456, not delete)
 

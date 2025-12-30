@@ -1,0 +1,33 @@
+{
+  "run_id": "20251230_190158",
+  "rtde": {
+    "robot_host": "192.168.0.3",
+    "robot_port": 30004,
+    "frequency_hz": 10.0
+  },
+  "paths": {
+    "rtde_csv": "/home/zhangw/UR5e_DataCollection/action_data/rtde_tcp_gripper_20251230_190158.csv",
+    "gripper_events_csv": "/home/zhangw/UR5e_DataCollection/action_data/gripper_events_20251230_190158.csv",
+    "config_json": "/home/zhangw/UR5e_DataCollection/action_data/arm_gripper_config_20251230_190158.json"
+  },
+  "gripper": {
+    "serial_port": "/dev/ttyUSB0",
+    "serial_baudrate": 9600,
+    "serial_timeout_s": 1.0,
+    "state_encoding": {
+      "open": 0,
+      "closed": 1
+    },
+    "control_keys": {
+      "close": "c",
+      "open": "o",
+      "quit": "q"
+    }
+  },
+  "freedrive": {
+    "enabled_on_start": true,
+    "host": "192.168.0.3",
+    "port": 30001,
+    "timeout_s": 10.0
+  }
+}
