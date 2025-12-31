@@ -252,6 +252,8 @@ go_home.py
 
 Polyscope remote mode.
 
+Note, the B81L laboratory's network requires all five circuit breakers to be turned on.
+
 Arm + Gripper + dual Camera: 
 
 ```bash
