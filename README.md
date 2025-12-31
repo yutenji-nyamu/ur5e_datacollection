@@ -285,6 +285,32 @@ The collected raw data is temporarily stored in action_data/ and camera_data/
 
 ### (7) Convert to HDF5 format
 
+Modify the task name in the Python script.
+
+Convert all existing data in folder to HDF5:
+
+```bash
+python convert_2_hdf5_output_log_dual_gripper.py
+```
+
+History:
+
+```bash
+python convert_2_hdf5_output_log.py
+python convert_2_hdf5_output_log_dual.py
+```
+
+(LOG:12261816 Convert 10 data to hdf5)
+(LOG:12311853 Convert 15 data to hdf5, RoboTwin_like_data/run_20251231_185159)
+
+View the contents of an HDF5 file, Example: 
+
+```bash
+python preview_hdf5.py /home/zhangw/UR5e_DataCollection/RoboTwin_like_data/run_20251130_194629/torch_cube/simple/data/episode0.hdf5
+```
+
+### (8) Convert to ACT format
+
 Include RoboTwin 2.0 as a subfolder of the project, without git: 
 
 UR5e_DataCollection/RoboTwin
@@ -293,52 +319,27 @@ In RoboTwin 2.0, each policy has a script that processes data in HDF5 format int
 
 UR5e_DataCollection/RoboTwin/policy/ACT/process_data.py
 
-Convert all existing data in folder to HDF5:
-
-```bash
-python convert_2_hdf5_output_log.py
-```
-Convert all existing data in folder to HDF5 (dual camera ver):
-
-```bash
-python convert_2_hdf5_output_log_dual.py
-```
-
-(LOG:12261816 Convert 10 data to hdf5)
-
-The converted HDF5, for example:
-
-```bash
-UR5e_DataCollection/RoboTwin_like_data/run_20251130_194629/torch_cube/simple/data/episode0.hdf5
-```
-
-View the contents of an HDF5 file: 
-
-```bash
-python preview_hdf5.py /home/zhangw/UR5e_DataCollection/RoboTwin_like_data/run_20251130_194629/torch_cube/simple/data/episode0.hdf5
-```
-
-### (8) Convert to ACT format
-
 Modify the data processing script for each strategy, using ACT as an example
+
+Enter the task name, path, and data quantity: 
 
 ```bash
 cd /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT
 python process_data_real.py \
-  /home/zhangw/UR5e_DataCollection/RoboTwin_like_data/run_20251226_181456 \
-  torch_cube \
+  /home/zhangw/UR5e_DataCollection/RoboTwin_like_data/run_20251231_190640 \
+  pick_block_bowl \
   simple \
-  10
+  15
 ```
 
 The converted data (ACT), for example:
 
 ```bash
-UR5e_DataCollection/RoboTwin/policy/ACT/processed_data/sim-torch_cube/simple-10
+RoboTwin/policy/ACT/processed_data/sim-pick_block_bowl/simple-15
 ```
 
 (LOG:12261816 Convert 10 data to ACT)
-
+(LOG:12311910 Convert 15 data to ACT, RoboTwin/policy/ACT/processed_data/sim-pick_block_bowl/simple-15)
 
 ### (9) Train
 
@@ -366,28 +367,28 @@ bash train.sh torch_cube simple 10 0 0
 Some preliminary phased test scripts: 
 
 ```bash
-python /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT/real_eval_stage1_load_act.py
-python /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT/real_eval_stage2_hdf5_forward.py
-python /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT/real_eval_stage3_online_no_ctrl.py
+python RoboTwin/policy/ACT/real_eval_stage1_load_act.py
+python RoboTwin/policy/ACT/real_eval_stage2_hdf5_forward.py
+python RoboTwin/policy/ACT/real_eval_stage3_online_no_ctrl.py
 ```
 
 First, return the robotic arm to its initial position:
 
 ```bash
-python /home/zhangw/UR5e_DataCollection/go_home.py
-```
-
-Performing inference on a real UR5e (Remote Control): 
-
-```bash
-python /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT/real_eval.py
+python go_home.py
 ```
 
 (First, adjust the task, settings, and data nums in: real_eval_stage1_load_act.py)
 
+Performing inference on a real UR5e (Remote Control): 
+
+```bash
+python RoboTwin/policy/ACT/real_eval.py
+```
+
 ### TODO
 
-本轮往上集成：rtde读写，平滑，爪子，自由驱动
+本轮往上集成：rtde读写，平滑，爪子；未训练推理；改推理脚本
 
 数据：数量，夹爪，随机化，vr
 

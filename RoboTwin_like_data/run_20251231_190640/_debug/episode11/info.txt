@@ -1,0 +1,4 @@
+T = 181
+out_path = /home/zhangw/UR5e_DataCollection/RoboTwin_like_data/run_20251231_190640/pick_block_bowl/simple/data/episode11.hdf5
+head0 = /home/zhangw/UR5e_DataCollection/camera_data/cam_dual_20251231_175555/head/frame_00001.png
+wrist0 = /home/zhangw/UR5e_DataCollection/camera_data/cam_dual_20251231_175555/wrist/frame_00001.png
