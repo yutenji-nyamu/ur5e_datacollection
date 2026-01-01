@@ -34,12 +34,14 @@ from constants import SIM_TASK_CONFIGS
 # ================== 需要你根据实际情况改的三个参数 ==================
 
 # 训练时的三个参数（和 train.sh 保持一致）
-TASK_NAME = "torch_cube"   # 比如 torch_cube
+TASK_NAME = "pick_block_bowl"   # 比如 torch_cube
 TASK_CONFIG = "simple"     # 比如 simple
-EXPERT_DATA_NUM = 10        # 比如 3，对应你采集了 3 条演示
+EXPERT_DATA_NUM = 15        # 比如 3，对应你采集了 3 条演示
 
 # 使用哪个 ckpt 文件
-CKPT_NAME = "policy_best.ckpt"  # 如果你只有 policy_last.ckpt，就改成那个
+CKPT_NAME = "policy_epoch_2000_seed_0.ckpt"  # 
+# CKPT_NAME = "policy_best.ckpt"  # 如果你只有 policy_last.ckpt，就改成那个
+
 
 # ====================================================================
 

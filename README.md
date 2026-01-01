@@ -358,11 +358,34 @@ Start Training:
 
 ```bash
 cd /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT
-bash train.sh torch_cube simple 10 0 0
+bash train.sh pick_block_bowl simple 15 0 0
 #            ^task_name  ^task_config  ^expert_data_num  ^seed  ^gpu_id
 ```
 
 ### (10) Inference
+
+#### (10.1) Encapsulated
+
+rtde_servoj_controller.py
+
+#### (10.2) Run
+
+Local Control.
+
+Return Arm to its initial position, and Warm up:
+
+```bash
+python /home/zhangw/UR5e_DataCollection/go_home_servoj.py
+```
+
+Run:
+
+```bash
+cd /home/zhangw/UR5e_DataCollection/RoboTwin/policy/ACT
+python real_eval_rtde_servoj_dualcam_gripper.py
+```
+
+#### (10.3) History
 
 Some preliminary phased test scripts: 
 
@@ -370,12 +393,6 @@ Some preliminary phased test scripts:
 python RoboTwin/policy/ACT/real_eval_stage1_load_act.py
 python RoboTwin/policy/ACT/real_eval_stage2_hdf5_forward.py
 python RoboTwin/policy/ACT/real_eval_stage3_online_no_ctrl.py
-```
-
-First, return the robotic arm to its initial position:
-
-```bash
-python go_home.py
 ```
 
 (First, adjust the task, settings, and data nums in: real_eval_stage1_load_act.py)
@@ -388,9 +405,9 @@ python RoboTwin/policy/ACT/real_eval.py
 
 ### TODO
 
-本轮往上集成：rtde读写，平滑，爪子；未训练推理；改推理脚本
+控制：平滑，关节；rt的控制模式
 
-数据：数量，夹爪，随机化，vr
+数据：收集关节，数量，随机化，vr
 
 训练：lora, 240, 核桃
 
@@ -399,5 +416,9 @@ python RoboTwin/policy/ACT/real_eval.py
 Lerobot框架: https://huggingface.co/docs/lerobot/en/index
 适配，或者参考功能，或者复用脚本
 https://huggingface.co/docs/lerobot/en/hilserl
+
+仓库管理：数据管理；文件夹
+
+接口统一封装，以适配更多框架
 
 

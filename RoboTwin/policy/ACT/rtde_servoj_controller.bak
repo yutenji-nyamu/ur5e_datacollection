@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+rtde_servoj_controller.py
+
+A minimal RTDE servoJ "setpoint streamer" for UR e-Series.
+
+- PC connects to RTDE (30004) with control_loop_configuration.xml
+- A URP program (e.g., translation_sample_servoj.urp) must be RUNNING on the robot
+  and reading:
+    input_int_register_0 as mode (2 = servoj)
+    input_double_register_0..5 as target TCP pose [x,y,z,rx,ry,rz]
+- This controller:
+    * sets mode=2 once
+    * runs a 500Hz loop: receive state, then send latest target setpoint
+
+Designed to be imported by a higher-level eval script.
+"""
+
+from __future__ import annotations
+
+import time
+import threading
+from dataclasses import dataclass
+from typing import Optional, Sequence
+
+import rtde.rtde as rtde
+import rtde.rtde_config as rtde_config
+
+
+@dataclass
+class RTDEServoJConfig:
+    robot_host: str = "192.168.0.3"
+    robot_port: int = 30004
+    frequency_hz: int = 500
+    config_xml_path: str = "control_loop_configuration.xml"
+    # mode=2 -> servoj in your URP convention
+    servoj_mode: int = 2
+    connect_retry_s: float = 0.5
+
+
+class RTDEServoJController:
+    """
+    Threaded RTDE controller:
+      - set_target_tcp(pose6)
+      - get_latest_tcp()  (from RTDE state)
+      - start()/stop()
+    """
+
+    def __init__(self, cfg: RTDEServoJConfig):
+        self.cfg = cfg
+
+        self._con: Optional[rtde.RTDE] = None
+        self._setp = None
+        self._watchdog = None
+
+        self._latest_tcp = None
+        self._latest_runtime_state = None
+
+        self._target_tcp = None
+        self._lock = threading.Lock()
+
+        self._running = False
+        self._th: Optional[threading.Thread] = None
+
+    def connect_and_start(self) -> None:
+        cfg = self.cfg
+        conf = rtde_config.ConfigFile(cfg.config_xml_path)
+        state_names, state_types = conf.get_recipe("state")
+        setp_names, setp_types = conf.get_recipe("setp")
+        watchdog_names, watchdog_types = conf.get_recipe("watchdog")
+
+        con = rtde.RTDE(cfg.robot_host, cfg.robot_port)
+
+        connection_state = con.connect()
+        while connection_state != 0:
+            time.sleep(cfg.connect_retry_s)
+            connection_state = con.connect()
+
+        con.get_controller_version()
+
+        con.send_output_setup(state_names, state_types, cfg.frequency_hz)
+        setp = con.send_input_setup(setp_names, setp_types)
+        watchdog = con.send_input_setup(watchdog_names, watchdog_types)
+
+        # Avoid "uninitialized" registers on robot side
+        for i in range(6):
+            setattr(setp, f"input_double_register_{i}", 0.0)
+        try:
+            setp.input_bit_registers0_to_31 = 0
+        except Exception:
+            pass
+
+        watchdog.input_int_register_0 = 0
+
+        if not con.send_start():
+            raise RuntimeError("RTDE send_start() failed")
+
+        # Read one state to initialize latest_tcp and default setpoint
+        state = con.receive()
+        self._latest_tcp = list(state.actual_TCP_pose)
+        self._latest_runtime_state = int(state.runtime_state)
+
+        # Set initial target to current TCP
+        with self._lock:
+            self._target_tcp = list(self._latest_tcp)
+
+        # Switch to servoj mode (2) once
+        watchdog.input_int_register_0 = int(cfg.servoj_mode)
+        con.send(watchdog)
+
+        self._con = con
+        self._setp = setp
+        self._watchdog = watchdog
+
+        # Start background thread
+        self._running = True
+        self._th = threading.Thread(target=self._loop, name="rtde_servoj_loop", daemon=True)
+        self._th.start()
+
+    def _loop(self) -> None:
+        con = self._con
+        setp = self._setp
+        if con is None or setp is None:
+            return
+
+        while self._running:
+            state = con.receive()
+            if state is None:
+                continue
+
+            self._latest_tcp = list(state.actual_TCP_pose)
+            self._latest_runtime_state = int(state.runtime_state)
+
+            # Only send setpoints when program is running
+            if self._latest_runtime_state > 1:
+                with self._lock:
+                    tgt = self._target_tcp
+
+                if tgt is not None:
+                    for i in range(6):
+                        setattr(setp, f"input_double_register_{i}", float(tgt[i]))
+                    con.send(setp)
+
+    def set_target_tcp(self, pose6: Sequence[float]) -> None:
+        if len(pose6) != 6:
+            raise ValueError("pose6 must be length-6")
+        with self._lock:
+            self._target_tcp = [float(x) for x in pose6]
+
+    def get_latest_tcp(self) -> Optional[list]:
+        return None if self._latest_tcp is None else list(self._latest_tcp)
+
+    def stop(self) -> None:
+        self._running = False
+        if self._th is not None:
+            self._th.join(timeout=1.0)
+
+        try:
+            if self._con is not None:
+                self._con.send_pause()
+        except Exception:
+            pass
+
+        try:
+            if self._con is not None:
+                self._con.disconnect()
+        except Exception:
+            pass

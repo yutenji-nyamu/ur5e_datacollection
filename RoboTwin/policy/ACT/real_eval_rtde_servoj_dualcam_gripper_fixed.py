@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+real_eval_rtde_servoj_dualcam_gripper.py
+
+Real robot inference with:
+- Dual RealSense cameras (head + wrist), mapped to ACT's 3 camera_names:
+    cam_high         <- head
+    cam_right_wrist  <- wrist
+    cam_left_wrist   <- wrist (duplicate)
+- ACT forward at 10Hz -> desired TCP target
+- RTDE servoJ streamer at 500Hz repeatedly sending latest TCP target
+- Gripper serial control with "one close, one open" (MAX_CYCLES=1 by default),
+  plus hysteresis + stability count + long min command interval (avoid fragile serial).
+
+IMPORTANT SOP (per your README constraints):
+1) (Optional) Remote mode: go_home.py
+2) Switch robot to Local mode
+3) Run the URP that implements the RTDE servoJ loop (e.g., translation_sample_servoj.urp)
+4) Run this script on PC.
+"""
+
+from __future__ import annotations
+
+# =====================
+# CONFIG (edit here)
+# =====================
+
+# Task identity (must match SIM_TASK_CONFIGS.json key: sim-{TASK_NAME}-{TASK_CONFIG}-{EXPERT_DATA_NUM})
+TASK_NAME = "pick_block_bowl"
+TASK_CONFIG = "simple"
+EXPERT_DATA_NUM = 15
+
+# Which ckpt to load under:
+#   ./act_ckpt/act-{TASK_NAME}/{TASK_CONFIG}-{EXPERT_DATA_NUM}/
+CKPT_NAME = "policy_epoch_2000_seed_0.ckpt"   # change to policy_best.ckpt if you want
+
+# Inference cadence
+INFER_HZ = 10.0
+
+# RTDE servoJ streamer
+ROBOT_HOST = "192.168.0.3"
+ROBOT_RTDE_PORT = 30004
+RTDE_HZ = 500
+RTDE_CONFIG_XML = "control_loop_configuration.xml"
+
+# Action-to-target shaping (same idea as real_eval.py)
+ACTION_DELTA_SCALE = 1.0
+MAX_LIN_VEL = 0.05   # m/s
+MAX_ANG_VEL = 0.5    # rad/s
+
+# RealSense (dual)
+RS_WIDTH = 640
+RS_HEIGHT = 480
+RS_FPS = 30
+HEAD_SERIAL = ""     # fill me (e.g., "1234567890"). If empty: auto-pick first device
+WRIST_SERIAL = ""    # fill me. If empty: auto-pick second device
+
+# Gripper (serial)
+ENABLE_GRIPPER = True
+GRIPPER_PORT = "/dev/ttyUSB0"
+GRIPPER_BAUDRATE = 9600
+GRIPPER_TIMEOUT_S = 1.0
+
+# Gripper policy (hysteresis + stability + long interval + max cycles)
+# Model outputs a continuous value near 0(open)/1(close).
+CLOSE_TH = 0.60
+OPEN_TH = 0.40
+STABLE_COUNT = 3              # consecutive frames needed to trigger
+MIN_CMD_INTERVAL_S = 2.0      # long interval to avoid fragile serial
+MAX_CYCLES = 1                # current task: one close + one open; future: change to >1
+
+# =====================
+# imports
+# =====================
+
+import os
+import sys
+import time
+import pickle
+import json
+
+import numpy as np
+import cv2
+import torch
+import pyrealsense2 as rs
+
+from pathlib import Path
+
+# --- Path anchoring (avoid cwd-dependent imports/files) ---
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
+
+# Default RTDE XML (same layout as your Servoj_RTDE_UR5 demo)
+try:
+    _UR5E_ROOT = _THIS_DIR.parents[3]  # .../UR5e_DataCollection
+except Exception:
+    _UR5E_ROOT = _THIS_DIR
+_DEFAULT_RTDE_XML = _UR5E_ROOT / 'Servoj_RTDE_UR5' / 'control_loop_configuration.xml'
+
+# Workaround: ACT/DETR code may parse CLI args on import; inject dummy required args when none are provided.
+if len(sys.argv) == 1:
+    sys.argv += [
+        '--ckpt_dir', 'dummy_ckpt_dir',
+        '--policy_class', 'ACT',
+        '--task_name', 'dummy_task',
+        '--seed', '0',
+        '--num_epochs', '1',
+        '--state_dim', '14',
+    ]
+
+# If RTDE_CONFIG_XML is a bare filename, make it absolute to avoid FileNotFoundError.
+if isinstance(RTDE_CONFIG_XML, str) and (os.sep not in RTDE_CONFIG_XML) and (not (_THIS_DIR / RTDE_CONFIG_XML).exists()):
+    RTDE_CONFIG_XML = str(_DEFAULT_RTDE_XML)
+
+# Anchor SIM_TASK_CONFIGS.json to this directory as well.
+_SIM_TASK_CONFIG_PATH = _THIS_DIR / 'SIM_TASK_CONFIGS.json'
+
+from gripper_serial import GripperSerial
+from rtde_servoj_controller import RTDEServoJConfig, RTDEServoJController
+
+# ACT policy
+from act_policy import ACTPolicy
+
+
+# =====================
+# utils
+# =====================
+
+def load_sim_task_configs() -> dict:
+    with open(_SIM_TASK_CONFIG_PATH, "r") as f:
+        return json.load(f)
+
+
+def build_ckpt_dir() -> str:
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # .../RoboTwin/policy/ACT
+    return os.path.join(base_dir, "act_ckpt", f"act-{TASK_NAME}", f"{TASK_CONFIG}-{EXPERT_DATA_NUM}")
+
+
+def load_stats_and_normalizers(ckpt_dir: str):
+    stats_path = os.path.join(ckpt_dir, "dataset_stats.pkl")
+    print(f"[INFO] Loading stats from: {stats_path}")
+    with open(stats_path, "rb") as f:
+        stats = pickle.load(f)
+
+    def pre_process(qpos_np: np.ndarray) -> np.ndarray:
+        return (qpos_np - stats["qpos_mean"]) / stats["qpos_std"]
+
+    def post_process(action_np: np.ndarray) -> np.ndarray:
+        return action_np * stats["action_std"] + stats["action_mean"]
+
+    return stats, pre_process, post_process
+
+
+def load_act_policy(camera_names: list[str], ckpt_dir: str):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[INFO] Using device: {device}")
+
+    # Match your train.sh defaults (same as real_eval_stage1_load_act.py)
+    kl_weight = 10
+    chunk_size = 50
+    hidden_dim = 512
+    dim_feedforward = 3200
+    lr_backbone = 1e-5
+    backbone = "resnet18"
+    enc_layers = 4
+    dec_layers = 7
+    nheads = 8
+
+    policy_config = {
+        "lr": 1e-5,
+        "num_queries": chunk_size,
+        "chunk_size": chunk_size,
+        "kl_weight": kl_weight,
+        "hidden_dim": hidden_dim,
+        "dim_feedforward": dim_feedforward,
+        "lr_backbone": lr_backbone,
+        "backbone": backbone,
+        "enc_layers": enc_layers,
+        "dec_layers": dec_layers,
+        "nheads": nheads,
+        "camera_names": camera_names,
+    }
+
+    policy = ACTPolicy(policy_config)
+    policy.to(device)
+    policy.eval()
+
+    ckpt_path = os.path.join(ckpt_dir, CKPT_NAME)
+    print(f"[INFO] Loading ckpt from: {ckpt_path}")
+    state_dict = torch.load(ckpt_path, map_location=device)
+    if "state_dict" in state_dict:
+        state_dict = state_dict["state_dict"]
+    status = policy.load_state_dict(state_dict, strict=False)
+    print(f"[INFO] load_state_dict status: {status}")
+    return policy, device
+
+
+def build_qpos_from_tcp_and_gripper(tcp: np.ndarray, gripper_val: float) -> np.ndarray:
+    """
+    qpos layout is consistent with your process_data_real.py:
+      state = [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+    For single-arm UR5e data, left/right arm are both tcp, and left/right gripper are the same.
+    """
+    tcp = tcp.astype(np.float32)
+    left_arm = tcp
+    right_arm = tcp
+    g = np.array([float(gripper_val)], dtype=np.float32)
+    state = np.concatenate((left_arm, g, right_arm, g), axis=0)
+    return state.astype(np.float32)
+
+
+def build_image_tensor_dual(img_head_bgr: np.ndarray, img_wrist_bgr: np.ndarray, camera_names: list[str], device):
+    """
+    Build (1, N_cam, 3, 480, 640) float32 tensor in the same order as camera_names.
+    Mapping:
+      cam_high        <- head
+      cam_right_wrist <- wrist
+      cam_left_wrist  <- wrist (duplicate)
+    """
+    H, W = 480, 640
+    head = cv2.resize(img_head_bgr, (W, H)).astype(np.float32) / 255.0
+    wrist = cv2.resize(img_wrist_bgr, (W, H)).astype(np.float32) / 255.0
+
+    imgs = []
+    for name in camera_names:
+        if name == "cam_high":
+            imgs.append(head)
+        elif name == "cam_right_wrist":
+            imgs.append(wrist)
+        elif name == "cam_left_wrist":
+            imgs.append(wrist)
+        else:
+            raise ValueError(f"Unknown camera name: {name}")
+
+    imgs = np.stack(imgs, axis=0)           # (N_cam, H, W, 3)
+    imgs = np.transpose(imgs, (0, 3, 1, 2)) # (N_cam, 3, H, W)
+    return torch.from_numpy(imgs).to(device).unsqueeze(0)
+
+
+def _discover_two_serials() -> tuple[str, str]:
+    ctx = rs.context()
+    devs = ctx.query_devices()
+    serials = []
+    for d in devs:
+        serials.append(d.get_info(rs.camera_info.serial_number))
+    if len(serials) < 2:
+        raise RuntimeError(f"Need 2 RealSense devices, found {len(serials)}: {serials}")
+    return serials[0], serials[1]
+
+
+def _start_pipe(serial: str):
+    pipe = rs.pipeline()
+    cfg = rs.config()
+    cfg.enable_device(serial)
+    cfg.enable_stream(rs.stream.color, RS_WIDTH, RS_HEIGHT, rs.format.bgr8, RS_FPS)
+    pipe.start(cfg)
+    return pipe
+
+
+class OneShotGripperFSM:
+    """
+    Ensures at most:
+      close() once, then open() once, per cycle.
+    Uses hysteresis thresholds + stability count + long min interval.
+    """
+
+    def __init__(self, gripper: GripperSerial):
+        self.g = gripper
+        self.state = "WAIT_CLOSE"
+        self._close_streak = 0
+        self._open_streak = 0
+        self._last_cmd_t = 0.0
+        self._cycles_done = 0
+
+        # estimated physical gripper state for qpos
+        self.estimated = 0.0  # 0=open, 1=closed
+
+    def _can_send(self, now: float) -> bool:
+        return (now - self._last_cmd_t) >= float(MIN_CMD_INTERVAL_S)
+
+    def step(self, pred_val: float, now: float) -> None:
+        if not ENABLE_GRIPPER:
+            return
+        if self._cycles_done >= int(MAX_CYCLES):
+            return
+
+        if self.state == "WAIT_CLOSE":
+            if pred_val >= float(CLOSE_TH):
+                self._close_streak += 1
+            else:
+                self._close_streak = 0
+
+            if self._close_streak >= int(STABLE_COUNT) and self._can_send(now):
+                self.g.close()
+                self._last_cmd_t = now
+                self.estimated = 1.0
+                self.state = "WAIT_OPEN"
+                self._open_streak = 0
+
+        elif self.state == "WAIT_OPEN":
+            if pred_val <= float(OPEN_TH):
+                self._open_streak += 1
+            else:
+                self._open_streak = 0
+
+            if self._open_streak >= int(STABLE_COUNT) and self._can_send(now):
+                self.g.open()
+                self._last_cmd_t = now
+                self.estimated = 0.0
+                self._cycles_done += 1
+                if self._cycles_done >= int(MAX_CYCLES):
+                    self.state = "DONE"
+                else:
+                    self.state = "WAIT_CLOSE"
+                self._close_streak = 0
+
+
+def limit_tcp_step(tcp_cur: np.ndarray, tcp_des_raw: np.ndarray, dt: float) -> np.ndarray:
+    """
+    Convert target TCP into a "bounded step" (velocity-limited) target.
+    This keeps behavior close to your old real_eval shaping.
+    """
+    tcp_cur = tcp_cur.astype(np.float32)
+    tcp_des_raw = tcp_des_raw.astype(np.float32)
+
+    if float(ACTION_DELTA_SCALE) != 1.0:
+        tcp_des = tcp_cur + float(ACTION_DELTA_SCALE) * (tcp_des_raw - tcp_cur)
+    else:
+        tcp_des = tcp_des_raw
+
+    # velocity limit -> position step limit
+    max_dp = float(MAX_LIN_VEL) * dt
+    max_dr = float(MAX_ANG_VEL) * dt
+
+    dp = tcp_des[:3] - tcp_cur[:3]
+    dr = tcp_des[3:] - tcp_cur[3:]
+
+    dp_norm = float(np.linalg.norm(dp))
+    if dp_norm > max_dp and dp_norm > 1e-9:
+        dp = dp / dp_norm * max_dp
+
+    dr_norm = float(np.linalg.norm(dr))
+    if dr_norm > max_dr and dr_norm > 1e-9:
+        dr = dr / dr_norm * max_dr
+
+    out = np.concatenate([tcp_cur[:3] + dp, tcp_cur[3:] + dr], axis=0)
+    return out.astype(np.float32)
+
+
+def main():
+    task_key = f"sim-{TASK_NAME}-{TASK_CONFIG}-{EXPERT_DATA_NUM}"
+    sim_cfgs = load_sim_task_configs()
+    if task_key not in sim_cfgs:
+        raise RuntimeError(f"Task key not found in SIM_TASK_CONFIGS.json: {task_key}")
+    camera_names = sim_cfgs[task_key]["camera_names"]
+    print(f"[INFO] Task key = {task_key}")
+    print(f"[INFO] Camera names = {camera_names}")
+
+    ckpt_dir = build_ckpt_dir()
+    stats, pre_process, post_process = load_stats_and_normalizers(ckpt_dir)
+    policy, device = load_act_policy(camera_names, ckpt_dir)
+
+    # RealSense setup
+    head_serial = HEAD_SERIAL
+    wrist_serial = WRIST_SERIAL
+    if not head_serial or not wrist_serial:
+        s0, s1 = _discover_two_serials()
+        head_serial = head_serial or s0
+        wrist_serial = wrist_serial or s1
+    print(f"[INFO] RealSense head_serial  = {head_serial}")
+    print(f"[INFO] RealSense wrist_serial = {wrist_serial}")
+
+    pipe_head = _start_pipe(head_serial)
+    pipe_wrist = _start_pipe(wrist_serial)
+
+    # RTDE servoJ streamer
+    rtde_cfg = RTDEServoJConfig(
+        robot_host=ROBOT_HOST,
+        robot_port=ROBOT_RTDE_PORT,
+        frequency_hz=int(RTDE_HZ),
+        config_xml_path=RTDE_CONFIG_XML,
+        servoj_mode=2,
+    )
+    ctrl = RTDEServoJController(rtde_cfg)
+    print("[INFO] Connecting RTDE servoJ controller ...")
+    ctrl.connect_and_start()
+    print("[INFO] RTDE servoJ controller started.")
+
+    # Gripper
+    g = None
+    fsm = None
+    if ENABLE_GRIPPER:
+        print(f"[INFO] Opening gripper serial: {GRIPPER_PORT} @ {GRIPPER_BAUDRATE}")
+        g = GripperSerial(port=GRIPPER_PORT, baudrate=GRIPPER_BAUDRATE, timeout_s=GRIPPER_TIMEOUT_S)
+        fsm = OneShotGripperFSM(g)
+
+    dt = 1.0 / float(INFER_HZ)
+    next_t = time.time()
+
+    print("[RUN] Ctrl+C to stop.")
+    try:
+        while True:
+            now = time.time()
+            if now < next_t:
+                time.sleep(min(0.001, next_t - now))
+                continue
+            next_t += dt
+
+            # latest tcp from RTDE thread
+            tcp = ctrl.get_latest_tcp()
+            if tcp is None:
+                continue
+            tcp = np.array(tcp, dtype=np.float32)
+
+            # RealSense frames
+            frames_h = pipe_head.wait_for_frames()
+            frames_w = pipe_wrist.wait_for_frames()
+            c_h = frames_h.get_color_frame()
+            c_w = frames_w.get_color_frame()
+            if (not c_h) or (not c_w):
+                continue
+            img_head = np.asanyarray(c_h.get_data())
+            img_wrist = np.asanyarray(c_w.get_data())
+
+            # qpos (use estimated gripper state if available)
+            g_est = 0.0
+            if fsm is not None:
+                g_est = float(fsm.estimated)
+            qpos_np = build_qpos_from_tcp_and_gripper(tcp, g_est)
+            qpos_norm = pre_process(qpos_np)
+            qpos_tensor = torch.from_numpy(qpos_norm).float().to(device).unsqueeze(0)
+
+            image_tensor = build_image_tensor_dual(img_head, img_wrist, camera_names, device)
+
+            with torch.no_grad():
+                a_hat = policy(qpos_tensor, image_tensor)  # (1, 50, 14)
+                if isinstance(a_hat, torch.Tensor):
+                    raw_action = a_hat[0, 0].cpu().numpy()
+                else:
+                    raw_action = a_hat[0][0].cpu().numpy()
+
+            action_real = post_process(raw_action)  # (14,)
+
+            # TCP target from action[:6]
+            tcp_des_raw = action_real[:6].astype(np.float32)
+            tcp_cmd = limit_tcp_step(tcp, tcp_des_raw, dt=float(dt))
+            ctrl.set_target_tcp(tcp_cmd.tolist())
+
+            # Gripper from action[13] (right_gripper)
+            if fsm is not None:
+                pred_g = float(action_real[13])
+                fsm.step(pred_g, now=time.time())
+
+    except KeyboardInterrupt:
+        print("\n[EXIT] KeyboardInterrupt.")
+    finally:
+        try:
+            pipe_head.stop()
+        except Exception:
+            pass
+        try:
+            pipe_wrist.stop()
+        except Exception:
+            pass
+
+        try:
+            ctrl.stop()
+        except Exception:
+            pass
+
+        if g is not None:
+            try:
+                g.shutdown()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    main()
