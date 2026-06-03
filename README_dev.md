@@ -275,6 +275,9 @@ python collect_data_action_dual_camera.py
 
 10hz
 
+with video:
+/home/zhangw/UR5e_DataCollection/collect_data_action_arm_gripper_dual_camera_no_cv_save_video.py
+
 ### (6.3) Raw Data
 
 The collected raw data is temporarily stored in action_data/ and camera_data/
@@ -402,6 +405,16 @@ Performing inference on a real UR5e (Remote Control):
 ```bash
 python RoboTwin/policy/ACT/real_eval.py
 ```
+
+### (11) Replay
+
+python go_home.py
+
+python /home/zhangw/UR5e_DataCollection/collect_data_action_arm_gripper_dual_camera_no_cv_save_video.py
+
+python go_home.py
+
+python /home/zhangw/UR5e_DataCollection/replay_action_socket_batch.py
 
 ### TODO
 

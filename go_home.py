@@ -21,7 +21,8 @@ import socket
 import time
 
 def main():
-    host = "192.168.0.3"   # 控制箱 IP
+    # host = "192.168.0.3"   # 控制箱 IP
+    host = "192.168.0.4"   # 控制箱 IP
     port = 30001           # 与你原来的脚本保持一致
 
     #尽量的低，但手腕相机视野包括了整张白纸

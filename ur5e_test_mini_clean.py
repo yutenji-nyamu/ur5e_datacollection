@@ -10,7 +10,8 @@ def main():
     mySocket.settimeout(10)
 
     #网络连接
-    host = '192.168.0.3'
+    # host = '192.168.0.3'
+    host = '192.168.0.4'
     port = 30001
     mySocket.connect((host, port))
 

@@ -42,6 +42,7 @@ from arm_gripper_collector import ArmGripperCollector
 # =========================
 # CONFIG (all tunables here)
 # =========================
+
 # Robot / RTDE
 ROBOT_HOST = "192.168.0.4"
 # ROBOT_HOST = "192.168.0.3"
@@ -75,6 +76,13 @@ WRIST_SERIAL = "233522079334"
 
 # Show live preview windows
 SHOW_PREVIEW = False
+
+# Video preview saving
+SAVE_VIDEO = True
+VIDEO_FPS = CAM_SAVE_HZ
+VIDEO_HEAD_NAME = "head.mp4"
+VIDEO_WRIST_NAME = "wrist.mp4"
+VIDEO_CODEC = "mp4v"
 
 
 class TerminalKeyPoller:
@@ -212,6 +220,33 @@ def main():
         head_serial=HEAD_SERIAL,
         wrist_serial=WRIST_SERIAL,
     )
+    
+    # ===== prepare preview videos =====
+    video_head_path = os.path.join(cam_run_dir, VIDEO_HEAD_NAME)
+    video_wrist_path = os.path.join(cam_run_dir, VIDEO_WRIST_NAME)
+
+    video_head_writer = None
+    video_wrist_writer = None
+
+    if SAVE_VIDEO:
+        fourcc = cv2.VideoWriter_fourcc(*VIDEO_CODEC)
+        video_head_writer = cv2.VideoWriter(
+            video_head_path,
+            fourcc,
+            float(VIDEO_FPS),
+            (COLOR_WIDTH, COLOR_HEIGHT),
+        )
+        video_wrist_writer = cv2.VideoWriter(
+            video_wrist_path,
+            fourcc,
+            float(VIDEO_FPS),
+            (COLOR_WIDTH, COLOR_HEIGHT),
+        )
+
+        if not video_head_writer.isOpened():
+            raise RuntimeError(f"Failed to open video writer: {video_head_path}")
+        if not video_wrist_writer.isOpened():
+            raise RuntimeError(f"Failed to open video writer: {video_wrist_path}")
 
     # A small sync file to align action rows <-> saved frames
     sync_csv_path = os.path.join(ACTION_DATA_DIR, f"sync_action_cam_{run_id}.csv")
@@ -312,6 +347,10 @@ def main():
                     cv2.imwrite(head_path, img_head)
                     cv2.imwrite(wrist_path, img_wrist)
 
+                    if SAVE_VIDEO:
+                        video_head_writer.write(img_head)
+                        video_wrist_writer.write(img_wrist)
+                    
                     sync_w.writerow([controller_ts, frame_idx, head_name, wrist_name])
                     sync_f.flush()
 
@@ -341,6 +380,18 @@ def main():
             except Exception:
                 pass
 
+            try:
+                if video_head_writer is not None:
+                    video_head_writer.release()
+            except Exception:
+                pass
+
+            try:
+                if video_wrist_writer is not None:
+                    video_wrist_writer.release()
+            except Exception:
+                pass
+
             if SHOW_PREVIEW:
                 try:
                     cv2.destroyAllWindows()
@@ -353,6 +404,9 @@ def main():
             print(f"  - {collector.paths.config_json}")
             print(f"  - {sync_csv_path}")
             print(f"  - {cam_cfg_path}")
+            if SAVE_VIDEO:
+                print(f"  - {video_head_path}")
+                print(f"  - {video_wrist_path}")
             print(f"  - {cam_run_dir}")
 
 

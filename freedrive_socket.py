@@ -13,7 +13,8 @@ import time
 # =========================
 # CONFIG (edit here only)
 # =========================
-HOST = "192.168.0.3"
+# HOST = "192.168.0.3"
+HOST = "192.168.0.4"
 PORT = 30001          # keep same as your working script
 TIMEOUT_S = 10
 
